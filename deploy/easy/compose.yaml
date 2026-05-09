@@ -36,7 +36,7 @@ services:
       - GO_SYMFONY_URL=http://localhost:8080
     # 添加caddy单独配置，不影响服务器默认caddy配置
     volumes:
-      - ./config/Caddyfile:/etc/caddy/Caddyfile
+      - ./Caddyfile:/etc/caddy/Caddyfile
 
 volumes:
   postgres_data:
