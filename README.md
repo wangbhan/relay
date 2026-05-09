@@ -1,89 +1,88 @@
-# Hyvor Relay
+# Hyvor Relay - 自托管部署
 
-[Hyvor Relay](https://relay.hyvor.com) is a self-hosted, open-source email API for developers. It uses SMTP to send
-emails using your own infrastructure. It is designed to be simple to self-host, easy to manage and observe, and powerful
-enough to send millions of daily emails.
+基于 [Hyvor Relay](https://github.com/hyvor/relay) 开源邮件 API，适配阿里云 ECS 国内环境部署。
 
-<p align="center">
-  <a href="https://relay.hyvor.com">
-    <img src="https://hyvor.com/img/logo.png" alt="Hyvor Relay Logo" width="130"/>
-  </a>
-</p>
+## 项目说明
 
-<p align="center">
-  <a href="https://relay.hyvor.com">
-    Email API for Developers
-  </a>
-    <span> | </span>
-    <a href="https://relay.hyvor.com/hosting">
-    Self-Hosting Docs
-  </a>
-    <span> | </span>
-    <a href="https://relay.hyvor.com/docs">
-    Product Docs
-  </a>
-</p>
+Hyvor Relay 是一个自托管的邮件发送服务，提供 REST API 和 SMTP 接口发送邮件，支持多项目、多域名、DKIM/SPF 验证、Webhook、邮件追踪等功能。
 
-## Features
+### 与原项目的区别
 
-- **Self-Hosted**: Docker compose or swarm-based deployment.
-- **Health Checks**: Multiple health checks to ensure best performance and deliverability.
-- **Email API**: Send emails using a simple API.
-- **Logs & SMTP Conversations**: View send logs and SMTP conversations of sent emails up to 30 days.
-- **Multi-Tenancy**: Support for multiple tenants with scoped access (useful for organizations and agencies).
-- **Project Management**: Support for multiple isolated projects within a tenant.
-- **Queues**: Two main queues to isolate transactional and distributional emails and IP reputation.
-- **Greylisting & Retries Handling**: Automatically manage greylisting and retries.
-- **Bounce Handling**: Automatically handle bounced emails.
-- **Feedback Loops**: Integrate with feedback loops to manage spam complaints.
-- **Suppressions**: Automatically manage email suppressions (bounces, unsubscribes, etc.).
-- **DNS Automation**: Delegate DNS to the in-built DNS server. No need to manage DNS records manually.
-- **Webhooks**: Receive HTTP callbacks for email events.
-- **Easy scaling**: Add more servers and IP addresses as needed.
-- **Observability**: Prometheus metrics, Grafana dashboards, and logs for monitoring.
+| 项目 | 说明 |
+|---|---|
+| `deploy/easy/Caddyfile` | 自定义 Caddy 配置，将内置 Caddy 改为监听 8080 端口，配合独立 Caddy 使用 |
+| `DEPLOY_SERVER.md` | 阿里云 ECS 完整部署指南（含踩坑记录） |
 
-<!-- - **Dedicated IPs**: Support for dedicated IPs users. (coming soon) -->
+其余文件与原项目一致，未做任何代码改动。
 
-## Screenshots
+## 快速开始
 
-The sudo dashboard for admins:
+### 文件结构
 
-![Sudo Dashboard](/meta/assets/screenshot-sudo.png)
+```
+deploy/easy/
+├── compose.yaml      # Docker Compose 配置
+├── Caddyfile         # 自定义 Caddy 配置（监听 8080）
+└── .env              # 环境变量（需自行创建）
+```
 
-The console for users (viewing send logs and SMTP conversations):
+### 1) 准备工作
 
-![User Console](/meta/assets/screenshot-console.png)
+详见 [DEPLOY_SERVER.md](./DEPLOY_SERVER.md) 第一至第三节，包括：
 
-## Architecture
+- DNS 记录配置（Porkbun）
+- Auth0 OIDC 配置
+- 阿里云 25 端口解封申请
+- 安装独立 Caddy
+- 安装 Clash 代理
+- 绑定公网 IP 到网卡
+- 释放 53 端口
 
-- **PHP + Symfony** for the API backend.
-- **Go** for email workers, webhook handlers, DNS server, and the incoming SMTP server.
-- **SvelteKit** and [**Hyvor Design System**](https://github.com/hyvor/design) for the frontend.
-- **PGSQL** is used for the database as well as for the queue.
+### 2) 部署
 
-## Roadmap & Community
+```bash
+cd deploy/easy
 
-- [Roadmap](https://github.com/hyvor/relay/blob/main/ROADMAP.md)
-- [HYVOR Community](https://hyvor.community)
-- [Discord](https://hyvor.com/go/discord)
+# 创建 .env（参考 DEPLOY_SERVER.md 2.3 节）
+cp .env.example .env  # 然后修改实际值
 
-## Contributing
+# 启动
+docker compose up -d
+```
 
-Visit [hyvor/dev](https://github.com/hyvor/dev) to set up the HYVOR development environment. Then, run `./run relay` to
-start Hyvor Relay at `https://relay.hyvor.localhost`.
+### 3) 验证
 
-Directory structure:
+```bash
+docker compose ps
+docker compose logs -f relay
+```
 
-- `/backend`: Symfony API backend
-- `/frontend`: SvelteKit frontend
-- `/worker`: Go services (single binary)
+## 外部应用接入
 
-<!-- ## Performance TODO -->
+| 字段 | 值 |
+|---|---|
+| SMTP 主机 | `mail.example.com` |
+| SMTP 端口 | `465` |
+| SMTP 用户名 | `relay` |
+| SMTP 密码 | Relay API Key |
+| 发件人邮箱 | `noreply@mail.example.com` |
+| 使用 TLS | 开启 |
 
-## License
+## 常见问题
 
-Hyvor Relay is licensed under the [AGPL-3.0 License](https://github.com/hyvor/relay/blob/main/LICENSE). We also offer [enterprise licenses](https://hyvor.com/enterprise) for organizations that require a commercial license or do not wish to comply with the AGPLv3 terms. See [Self-Hosting License FAQ](https://hyvor.com/docs/hosting-license) for more information.
+**Q: 为什么不直接用项目根目录的 `quick-start.sh`？**
+A: 项目根目录的 `quick-start.sh`、`check-config.sh`、`.env.example` 等文件使用了一套与实际代码不匹配的环境变量（如 `SMTP_HOST`、`RELAY_SECRET_KEY` 等），不要使用。请以 `deploy/easy/` 目录为准。
 
-![HYVOR Banner](https://raw.githubusercontent.com/hyvor/relay/refs/heads/main/meta/assets/hyvor-banner.svg)
+**Q: 为什么需要独立 Caddy？**
+A: Relay 内置的 Caddy 与 FrankenPHP 编译在一起，无法从外部管理。独立 Caddy 统一管理 80/443 端口和 SSL 证书，Relay 内置 Caddy 退到 8080 端口。这样可以同时运行多个 Web 服务。
 
-Copyright © HYVOR. HYVOR name and logo are trademarks of HYVOR, SARL.
+**Q: 邮件发不出去？**
+A: 检查以下几点：
+1. 阿里云 25 端口是否已解封（`telnet smtp.qq.com 25`）
+2. `ip_count` 是否大于 0（`docker compose logs relay | grep ip_count`）
+3. DKIM 域名是否已验证
+4. 发件人邮箱是否使用已验证的域名
+
+## 详细文档
+
+完整的部署步骤和踩坑记录请参考 [DEPLOY_SERVER.md](./DEPLOY_SERVER.md)。

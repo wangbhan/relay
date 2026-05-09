@@ -17,12 +17,12 @@
 
 假设域名为 `example.com`，需要在 Porkbun 添加以下 DNS 记录：
 
-| Type | Host | Answer | 说明 |
-|---|---|---|---|
-| A | `relay` | `服务器公网IP` | Web 访问 |
-| A | `mail` | `服务器公网IP` | 邮件 EHLO |
-| MX | *(留空)* | `mail.example.com` | 接收邮件 |
-| TXT | *(留空)* | `v=spf1 ip4:服务器公网IP ~all` | SPF 验证 |
+| Type | Host     | Answer                         | 说明      |
+| ---- | -------- | ------------------------------ | --------- |
+| A    | `relay`  | `服务器公网IP`                 | Web 访问  |
+| A    | `mail`   | `服务器公网IP`                 | 邮件 EHLO |
+| MX   | *(留空)* | `mail.example.com`             | 接收邮件  |
+| TXT  | *(留空)* | `v=spf1 ip4:服务器公网IP ~all` | SPF 验证  |
 
 > Host 只填 `relay`，Porkbun 自动补全为 `relay.example.com`。
 > PTR 反向 DNS 需在阿里云控制台 → 弹性 IP 中配置，指向 `mail.example.com`。
@@ -32,14 +32,16 @@
 Relay 不内置用户系统，必须用 OIDC 登录。
 
 1. 注册 [auth0.com](https://auth0.com)（免费，无需绑卡）
+
 2. Applications → Create Application → **Regular Web Applications**
+
 3. Settings 中填写：
 
-   | 字段 | 值 |
-   |---|---|
+   | 字段                  | 值                                            |
+   | --------------------- | --------------------------------------------- |
    | Allowed Callback URLs | `https://relay.example.com/api/oidc/callback` |
-   | Allowed Logout URLs | `https://relay.example.com` |
-   | Allowed Web Origins | `https://relay.example.com` |
+   | Allowed Logout URLs   | `https://relay.example.com`                   |
+   | Allowed Web Origins   | `https://relay.example.com`                   |
 
 4. 记录 **Domain**、**Client ID**、**Client Secret**
 
@@ -98,6 +100,9 @@ services:
     environment:
       - HTTPS_PROXY=http://127.0.0.1:7890
       - HTTP_PROXY=http://127.0.0.1:7890
+      - GO_SYMFONY_URL=http://localhost:8080
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
 
 volumes:
   postgres_data:
@@ -130,17 +135,49 @@ LOG_LEVEL=info
 
 ## 三、启动前必须解决的问题
 
-### 3.1 释放 80 端口
+### 3.1 配置独立 Caddy（统一管理所有服务）
 
-Relay 内置 Caddy 监听 80/443，必须确保 80 端口没有被占用：
+Relay 内置的 Caddy 与 FrankenPHP 编译在一起，无法从外部管理。因此采用**独立 Caddy + Relay 内部 8080 端口**的架构：
+
+- 独立 Caddy 监听 80/443 → 统一管理 SSL 和反向代理
+- Relay 内置 Caddy 监听 8080 → 只处理 Relay 应用
+
+#### 3.1.1 安装独立 Caddy
 
 ```bash
-sudo ss -tlnp | grep :80
-# 如果被 Nginx/Apache 占用，停掉它
-sudo systemctl stop nginx && sudo systemctl disable nginx
+sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt update
+sudo apt install caddy
 ```
 
-> Relay 镜像内置 Caddy，**不需要安装 Nginx**。
+#### 3.1.2 配置独立 Caddy
+
+编辑 `/etc/caddy/Caddyfile`：
+
+```
+# Relay 服务
+relay.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+
+# 其他服务示例（按需添加）
+# app.example.com {
+#     reverse_proxy 127.0.0.1:3000
+# }
+```
+
+```bash
+sudo systemctl restart caddy
+```
+
+#### 3.1.3 Relay 使用自定义 Caddyfile
+
+项目已包含自定义 Caddyfile（`deploy/easy/Caddyfile`），将 Relay 内置 Caddy 改为监听 8080 端口。需要在 compose.yaml 中挂载并配置 Go Worker 地址（见 2.2 节）。
+
+> **为什么不能用 Relay 内置 Caddy 管理所有服务？**
+> Relay 的 Caddy 与 FrankenPHP 编译在一起，是 PHP 运行时的一部分，不是独立进程，无法从外部管理。只能通过挂载自定义 Caddyfile 修改其配置。
 
 ### 3.2 释放 53 端口（DNS）
 
@@ -217,7 +254,7 @@ cd ~/relay
 docker compose up -d
 ```
 
-首次启动会自动：拉取镜像、初始化数据库、运行迁移、启动所有服务、申请 SSL 证书。（其中如果.env文件错误过需要删除数据库挂载的卷之后再重新启动，不然域名地址会是之前文件的值）
+首次启动会自动：拉取镜像、初始化数据库、运行迁移、启动所有服务、申请 SSL 证书。**（其中如果.env文件错误过需要删除数据库挂载的卷之后再重新启动，不然域名地址会是之前文件的值）**
 
 验证：
 
@@ -252,7 +289,7 @@ curl https://relay.example.com/api/health
 
 部分客户端只支持隐式 TLS（端口 465），但 Relay 只支持 STARTTLS（端口 587）。用 stunnel 做转换。
 
-### 6.1 获取 Let's Encrypt 证书
+### 6.1 获取 Let's Encrypt 证书（通过cerbot）
 
 ```bash
 certbot certonly --manual --preferred-challenges dns -d mail.example.com --agree-tos --register-unsafely-without-email
@@ -289,14 +326,14 @@ docker exec hyvor-relay php bin/console tls:generate-mail-certificate
 
 ## 七、外部应用 SMTP 配置
 
-| 字段 | 值 |
-|---|---|
-| SMTP 主机 | `mail.example.com` |
-| SMTP 端口 | `465` |
-| SMTP 用户名 | `relay`（随便填，不校验） |
-| SMTP 密码 | **Relay API Key**（项目 → API 中生成的） |
-| 发件人邮箱 | `noreply@mail.example.com`（必须是 Relay 中验证过的域名） |
-| 使用 TLS | 开启 |
+| 字段        | 值                                                        |
+| ----------- | --------------------------------------------------------- |
+| SMTP 主机   | `mail.example.com`                                        |
+| SMTP 端口   | `465`                                                     |
+| SMTP 用户名 | `relay`（随便填，不校验）                                 |
+| SMTP 密码   | **Relay API Key**（项目 → API 中生成的）                  |
+| 发件人邮箱  | `noreply@mail.example.com`（必须是 Relay 中验证过的域名） |
+| 使用 TLS    | 开启                                                      |
 
 > ⚠️ 发件人邮箱**必须**使用在 Relay 项目中注册并验证过的域名，不能用 gmail.com 等外部域名。
 
@@ -306,16 +343,16 @@ docker exec hyvor-relay php bin/console tls:generate-mail-certificate
 
 ### 坑 1：WEB_URL 配置错误
 
-| 错误 | 正确 |
-|---|---|
+| 错误                                                 | 正确                                |
+| ---------------------------------------------------- | ----------------------------------- |
 | `WEB_URL=http://relay.example.com/api/oidc/callback` | `WEB_URL=https://relay.example.com` |
 
 `WEB_URL` 是 Web 根地址，回调路径是 Relay 内部自动处理的。
 
 ### 坑 2：项目中存在两套配置
 
-| 官方部署（正确） | 第三方文件（不要用） |
-|---|---|
+| 官方部署（正确）            | 第三方文件（不要用）                                         |
+| --------------------------- | ------------------------------------------------------------ |
 | `deploy/easy/` 目录下的文件 | `quick-start.sh`、`check-config.sh`、`hyvor-relay-deploy-guide.md`、`.env.example` |
 
 第三方文件的环境变量与实际代码不匹配（如 `SMTP_HOST`、`RELAY_SECRET_KEY` 等变量不存在）。
@@ -398,13 +435,14 @@ docker compose restart
 ## 十、架构图
 
 ```
-用户浏览器 ──HTTPS──→ relay.example.com:443
-                          ↓
+用户浏览器 ──HTTPS──→ 独立 Caddy (:80/:443, SSL) ──proxy──→ Relay 内置 Caddy (:8080)
+其他应用   ──HTTPS──→ 独立 Caddy (:80/:443, SSL) ──proxy──→ 其他服务 (:3000/...)
+
               Docker 容器 (network_mode: host)
               ┌────────────────────────────┐
-              │  Caddy (FrankenPHP)         │ ← 自动 SSL (Let's Encrypt)
-              │    ├── /api/* → PHP 后端     │
-              │    └── /* → 静态前端文件     │
+              │  Caddy/FrankenPHP (:8080)  │ ← 仅处理 Relay 应用
+              │    ├── /api/* → PHP 后端    │
+              │    └── /* → 静态前端文件    │
               │                            │
               │  Go Worker                 │ ← 邮件发送/DNS 服务
               │  DNS Server (:53)          │
