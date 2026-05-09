@@ -29,6 +29,14 @@ services:
     network_mode: "host"
     env_file:
       - .env
+    # 国内服务访问国外DNS验证的如果有问题，需要添加代理
+    environment:
+      - HTTPS_PROXY=http://127.0.0.1:7890
+      - HTTP_PROXY=http://127.0.0.1:7890
+      - GO_SYMFONY_URL=http://localhost:8080
+    # 添加caddy单独配置，不影响服务器默认caddy配置
+    volumes:
+      - ./config/Caddyfile:/etc/caddy/Caddyfile
 
 volumes:
   postgres_data:
